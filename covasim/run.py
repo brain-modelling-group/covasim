@@ -395,7 +395,7 @@ class MultiSim(cvb.FlexPretty):
             for reskey in sim.result_keys():
                 val = sim.results[reskey].values[day]
                 if reskey not in ['r_eff', 'doubling_time']:
-                    val = int(val)
+                    val = val
                 resdict[label][reskey] = val
 
         if do_plot:
