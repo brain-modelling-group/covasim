@@ -560,7 +560,7 @@ def plot_people(people, bins=None, width=1.0, alpha=0.6, fig_args=None, axis_arg
 
     # Handle inputs
     if bins is None:
-        bins = np.arange(0,101)
+        bins = np.arange(0,111)
 
     # Set defaults
     color     = [0.1,0.1,0.1] # Color for the age distribution
@@ -635,6 +635,7 @@ def plot_people(people, bins=None, width=1.0, alpha=0.6, fig_args=None, axis_arg
                 ylabel = 'Per capita number of contacts'
                 title = f'Mean contacts for layer "{lk}": {mean_contacts:0.2f}'
             elif w_type == 'weighted':
+                #import pdb; pdb.set_trace()
                 weight = people.pars['beta_layer'][lk]*people.pars['beta']
                 total_weight = np.round(weight*2*len(people.contacts[lk]))
                 ylabel = 'Weighted number of contacts'
