@@ -15,14 +15,62 @@ Coming soon
 
 These are the major improvements we are currently working on. If there is a specific bugfix or feature you would like to see, please `create an issue <https://github.com/InstituteforDiseaseModeling/covasim/issues/new/choose>`__.
 
-- Expanded tutorials (health care workers, calibration, exercises, etc.)
-- Multi-region and geographical support
-- Economics and costing analysis
+- Adding the delta variant (planned for v3.0.7)
+- Updates to the NAb decay function (planned for v3.0.7)
+- Continued updates to vaccine and variant parameters and workflows (planned for v3.1)
+- Multi-region and geographical support (planned for v3.2)
+- Economics and costing analysis (planned for v3.3)
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~
 Latest versions (3.0.x)
 ~~~~~~~~~~~~~~~~~~~~~~~
+
+Version 3.0.6 (2021-06-21)
+--------------------------
+- Added alpha, beta, and gamma as aliases for variants B117, B1351, and P1, respectively.
+- Split vaccine implementation to separate the state changes associated with vaccinating a person from the allocation/prioritization of vaccine distribution. The base class ``cv.BaseVaccination`` implements vaccinating individuals, and derived classes define the ``cv.BaseVaccination.select_people()`` method which determines who to vaccinate each timestep.
+- Added ``cv.vaccinate_num()`` as an alternate way to allocate vaccines. This intervention specifies the order in which to vaccinate people, and the number of doses to distribute each day.
+- Renamed ``cv.vaccinate()`` to ``cv.vaccinate_prob()``, but added ``cv.vaccinate()`` as an alias that can be used (more or less) interchangeably with ``cv.vaccinate_prob()``.
+- Updated NAb kinetics so that the NAb level no longer exceeds the peak NAb value after the second dose, and updated ``nab_growth_decay`` so that the NAb level no longer increases in the second decay phase (i.e. after 250 days by default). **Note**: we are in the process of changing the functional form for the NAb waning, so this will likely change again in version 3.0.7.
+- Vaccine parameters for simulations with multiple different vaccines are now correctly handled. Previously only the first vaccine's parameters were used.
+- Added a new ``fit_args`` argument to the ``Calibration`` class, allowing arguments to be passed to ``sim.compute_fit()``. Also added a ``par_samplers`` argument, allowing different Optuna samplers to be specified.
+- *Regression information*: ``cv.vaccination`` has been renamed to ``cv.vaccinate_prob`` (however, ``cv.vaccinate()`` is retained as an alias to ``cv.vaccinate_prob()``, so user code should not break). The correction to the NAb decay implementation means results in simulations with vaccines and a long duration (e.g., >250 days) may differ -- vaccines are expected to be slightly less effective.
+- *GitHub info*: PR `1088 <https://github.com/amath-idm/covasim/pull/1088>`_
+
+
+Version 3.0.5 (2021-05-26)
+--------------------------
+- Changed all reference to variants from ``strain`` to ``variant``. For example, ``cv.strain()`` is now ``cv.variant()``, ``cv.Sim(strains=...)`` is now ``cv.Sim(variants=...)``, etc. See `this article <https://www.forbes.com/sites/jvchamary/2021/02/28/coronavirus-covid-variant-mutant-strain/?sh=4459cbc82241>`__ for the rationale behind the change.
+- Changed the ``nab_to_efficacy`` function based on a joint estimation of the marginal vaccine efficacies and inferred conditional efficacies.
+- Changed the parameters provided to ``nab_to_efficacy`` function.
+- Updated some strain parameters to be based on studies and not modeled inferences.
+- *Regression information*: All instances of ``strain`` should be renamed ``variant``. A find-and-replace should be sufficient for updating most scripts. Parameter values and functional forms have also been updated, so results using waning immunity will differ.
+- *GitHub info*: PR `1069 <https://github.com/amath-idm/covasim/pull/1069>`__
+
+
+Version 3.0.4 (2021-05-19)
+--------------------------
+- Fixed a bug that prevented simulations from being run *without* prognoses by age.
+- Fixed an array length mismatch for single-dose vaccines.
+- The default antibody kinetics are now a 3-part curve, with a 14-day growth, 250 day exp decay and then another exponential decay with a exponentially decaying decay parameter. This is captured in the new NAb functional form, ``nab_growth_decay``. To align with this change, NAbs are now initialized at the time of infection, so that individuals build immunity over the course of infection. 
+- Some strain parameter changes based on https://www.eurosurveillance.org/content/10.2807/1560-7917.ES.2021.26.16.2100348
+- Added strain to the infection log
+- Removed the ``rel_imm_strain`` parameter; self-immunity is now always 1.0.
+- Updated vaccine and strain parameter values based on fits to empirical data.
+- Merged multisims now use the labels from each multisim, rather than the sim labels, for plotting.
+- *Regression information*: Parameter values have been updated, so results using waning immunity will differ.
+- *GitHub info*: PR `1058 <https://github.com/amath-idm/covasim/pull/1058>`__
+
+
+Version 3.0.3 (2021-05-17)
+--------------------------
+- Added a new class, ``cv.Calibration``, that can perform automatic calibration. Simplest usage is ``sim.calibrate(calib_pars)``. Note: this requires Optuna, which is not installed by default; please install separately via ``pip install optuna``. See the updated calibration tutorial for more information.
+- Added a new result, ``known_deaths``, which counts only deaths among people who have been diagnosed.
+- Updated several vaccine and variant parameters (e.g., B1.351 and B117 cross-immunity).
+- ``sim.compute_fit()`` now returns the fit by default, and creates ``sim.fit`` (previously, this was stored in ``sim.results.fit``).
+- *Regression information*: Calls to ``sim.results.fit`` should be replaced with ``sim.fit``. The ``output`` parameter for ``sim.compute_fit()`` has been removed since it now always outputs the ``Fit`` object.
+- *GitHub info*: PR `1047 <https://github.com/amath-idm/covasim/pull/1047>`__
 
 
 Version 3.0.2 (2021-04-26)

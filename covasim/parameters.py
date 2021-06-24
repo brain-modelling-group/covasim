@@ -8,7 +8,7 @@ from .settings import options as cvo # For setting global options
 from . import misc as cvm
 from . import defaults as cvd
 
-__all__ = ['make_pars', 'reset_layer_pars', 'get_prognoses', 'get_strain_choices', 'get_vaccine_choices']
+__all__ = ['make_pars', 'reset_layer_pars', 'get_prognoses', 'get_variant_choices', 'get_vaccine_choices']
 
 
 def make_pars(set_prognoses=False, prog_by_age=True, version=None, **kwargs):
@@ -61,23 +61,23 @@ def make_pars(set_prognoses=False, prog_by_age=True, version=None, **kwargs):
     pars['beta'] = 0.016  # Beta per symptomatic contact; absolute value, calibrated
     pars['asymp_factor']    = 1.0  # Multiply beta by this factor for asymptomatic cases; no statistically significant difference in transmissibility: https://www.sciencedirect.com/science/article/pii/S1201971220302502
 
-    # Parameters that control settings and defaults for multi-strain runs
+    # Parameters that control settings and defaults for multi-variant runs
     pars['n_imports'] = 0 # Average daily number of imported cases (actual number is drawn from Poisson distribution)
-    pars['n_strains'] = 1 # The number of strains circulating in the population
+    pars['n_variants'] = 1 # The number of variants circulating in the population
 
     # Parameters used to calculate immunity
     pars['use_waning']      = False # Whether to use dynamically calculated immunity
     pars['nab_init']        = dict(dist='normal', par1=0, par2=2)  # Parameters for the distribution of the initial level of log2(nab) following natural infection, taken from fig1b of https://doi.org/10.1101/2021.03.09.21252641
-    pars['nab_decay']       = dict(form='nab_decay', decay_rate1=np.log(2)/90, decay_time1=250, decay_rate2=0.001) # Parameters describing the kinetics of decay of nabs over time, taken from fig3b of https://doi.org/10.1101/2021.03.09.21252641
+    pars['nab_decay']       = dict(form='nab_growth_decay', growth_time=22, decay_rate1=np.log(2)/100, decay_time1=250, decay_rate2=0.002587529)
     pars['nab_kin']         = None # Constructed during sim initialization using the nab_decay parameters
     pars['nab_boost']       = 1.5 # Multiplicative factor applied to a person's nab levels if they get reinfected. # TODO: add source
-    pars['nab_eff']         = dict(sus=dict(slope=1.6, n_50=0.05), symp=0.1, sev=0.52) # Parameters to map nabs to efficacy
+    pars['nab_eff']         = dict(alpha_inf=3.5, beta_inf=1.219, alpha_symp_inf=-1.06, beta_symp_inf=0.867, alpha_sev_symp=0.268, beta_sev_symp=3.4) # Parameters to map nabs to efficacy
     pars['rel_imm_symp']    = dict(asymp=0.85, mild=1, severe=1.5) # Relative immunity from natural infection varies by symptoms
     pars['immunity']        = None  # Matrix of immunity and cross-immunity factors, set by init_immunity() in immunity.py
 
-    # Strain-specific disease transmission parameters. By default, these are set up for a single strain, but can all be modified for multiple strains
-    pars['rel_beta']        = 1.0 # Relative transmissibility varies by strain
-    pars['rel_imm_strain']  = 1.0 # Relative own-immmunity varies by strain
+    # Variant-specific disease transmission parameters. By default, these are set up for a single variant, but can all be modified for multiple variants
+    pars['rel_beta']        = 1.0 # Relative transmissibility varies by variant
+    pars['rel_imm_variant']  = 1.0 # Relative own-immmunity varies by variant
 
     # Duration parameters: time for disease progression
     pars['dur'] = {}
@@ -118,15 +118,15 @@ def make_pars(set_prognoses=False, prog_by_age=True, version=None, **kwargs):
     pars['no_hosp_factor'] = 2.0  # Multiplier for how much more likely severely ill people are to become critical if no hospital beds are available
     pars['no_icu_factor']  = 2.0  # Multiplier for how much more likely critically ill people are to die if no ICU beds are available
 
-    # Handle vaccine and strain parameters
+    # Handle vaccine and variant parameters
     pars['vaccine_pars'] = {} # Vaccines that are being used; populated during initialization
     pars['vaccine_map']  = {} #Reverse mapping from number to vaccine key
-    pars['strains']      = [] # Additional strains of the virus; populated by the user, see immunity.py
-    pars['strain_map']   = {0:'wild'} # Reverse mapping from number to strain key
-    pars['strain_pars']  = dict(wild={}) # Populated just below
-    for sp in cvd.strain_pars:
+    pars['variants']      = [] # Additional variants of the virus; populated by the user, see immunity.py
+    pars['variant_map']   = {0:'wild'} # Reverse mapping from number to variant key
+    pars['variant_pars']  = dict(wild={}) # Populated just below
+    for sp in cvd.variant_pars:
         if sp in pars.keys():
-            pars['strain_pars']['wild'][sp] = pars[sp]
+            pars['variant_pars']['wild'][sp] = pars[sp]
 
     # Update with any supplied parameter values and generate things that need to be generated
     pars.update(kwargs)
@@ -244,11 +244,14 @@ def get_prognoses(by_age=True, version=None):
 
     if not by_age: # All rough estimates -- almost always, prognoses by age (below) are used instead
         prognoses = dict(
-            age_cutoffs  = np.array([0]),
-            symp_probs   = np.array([0.75]),
-            severe_probs = np.array([0.10]),
-            crit_probs   = np.array([0.04]),
-            death_probs  = np.array([0.01]),
+            age_cutoffs   = np.array([0]),
+            sus_ORs       = np.array([1.00]),
+            trans_ORs     = np.array([1.00]),
+            symp_probs    = np.array([0.75]),
+            comorbidities = np.array([1.00]),
+            severe_probs  = np.array([0.10]),
+            crit_probs    = np.array([0.04]),
+            death_probs   = np.array([0.01]),
         )
     else:
         prognoses = dict(
@@ -264,7 +267,7 @@ def get_prognoses(by_age=True, version=None):
     prognoses = relative_prognoses(prognoses) # Convert to conditional probabilities
 
     # If version is specified, load old parameters
-    if version is not None:
+    if by_age and version is not None:
         version_prognoses = cvm.get_version_pars(version, verbose=False)['prognoses']
         for key in version_prognoses.keys(): # Only loop over keys that have been populated
             if key in version_prognoses: # Only replace keys that exist in the old version
@@ -311,18 +314,18 @@ def absolute_prognoses(prognoses):
     return out
 
 
-#%% Strain, vaccine, and immunity parameters and functions
+#%% Variant, vaccine, and immunity parameters and functions
 
-def get_strain_choices():
+def get_variant_choices():
     '''
-    Define valid pre-defined strain names
+    Define valid pre-defined variant names
     '''
     # List of choices currently available: new ones can be added to the list along with their aliases
     choices = {
         'wild':  ['wild', 'default', 'pre-existing', 'original'],
-        'b117':  ['b117', 'uk', 'united kingdom'],
-        'b1351': ['b1351', 'sa', 'south africa'],
-        'p1':    ['p1', 'b11248', 'brazil'],
+        'b117':  ['alpha', 'b117', 'uk', 'united kingdom', 'kent'],
+        'b1351': ['beta', 'b1351', 'sa', 'south africa'],
+        'p1':    ['gamma', 'p1', 'b11248', 'brazil'],
     }
     mapping = {name:key for key,synonyms in choices.items() for name in synonyms} # Flip from key:value to value:key
     return choices, mapping
@@ -345,14 +348,13 @@ def get_vaccine_choices():
     return choices, mapping
 
 
-def get_strain_pars(default=False):
+def get_variant_pars(default=False):
     '''
-    Define the default parameters for the different strains
+    Define the default parameters for the different variants
     '''
     pars = dict(
 
         wild = dict(
-            rel_imm_strain  = 1.0, # Default values
             rel_beta        = 1.0, # Default values
             rel_symp_prob   = 1.0, # Default values
             rel_severe_prob = 1.0, # Default values
@@ -361,30 +363,27 @@ def get_strain_pars(default=False):
         ),
 
         b117 = dict(
-            rel_imm_strain  = 1.0, # Immunity protection obtained from a natural infection with wild type, relative to wild type. No evidence yet for a difference with B117
-            rel_beta        = 1.5, # Transmissibility estimates range from 40-80%, see https://cmmid.github.io/topics/covid19/uk-novel-variant.html, https://www.eurosurveillance.org/content/10.2807/1560-7917.ES.2020.26.1.2002106
+            rel_beta        = 1.67, # Midpoint of the range reported in https://science.sciencemag.org/content/372/6538/eabg3055
             rel_symp_prob   = 1.0, # Inconclusive evidence on the likelihood of symptom development. See https://www.thelancet.com/journals/lanpub/article/PIIS2468-2667(21)00055-4/fulltext
-            rel_severe_prob = 1.8, # From https://www.ssi.dk/aktuelt/nyheder/2021/b117-kan-fore-til-flere-indlaggelser and https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/961042/S1095_NERVTAG_update_note_on_B.1.1.7_severity_20210211.pdf
+            rel_severe_prob = 1.64, # From https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3792894, and consistent with https://www.eurosurveillance.org/content/10.2807/1560-7917.ES.2021.26.16.2100348 and https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/961042/S1095_NERVTAG_update_note_on_B.1.1.7_severity_20210211.pdf
             rel_crit_prob   = 1.0, # Various studies have found increased mortality for B117 (summary here: https://www.thelancet.com/journals/laninf/article/PIIS1473-3099(21)00201-2/fulltext#tbl1), but not necessarily when conditioned on having developed severe disease
             rel_death_prob  = 1.0, # See comment above.
         ),
 
         b1351 = dict(
-            rel_imm_strain  = 0.066, # Immunity protection obtained from a natural infection with wild type, relative to wild type. TODO: add source
-            rel_beta        = 1.4,
+            rel_beta        = 1.0, # No increase in transmissibility; B1351's fitness advantage comes from the reduction in neutralisation
             rel_symp_prob   = 1.0,
-            rel_severe_prob = 1.4,
+            rel_severe_prob = 3.6, # From https://www.eurosurveillance.org/content/10.2807/1560-7917.ES.2021.26.16.2100348
             rel_crit_prob   = 1.0,
-            rel_death_prob  = 1.4,
+            rel_death_prob  = 1.0,
         ),
 
         p1 = dict(
-            rel_imm_strain  = 0.17,
-            rel_beta        = 1.4, # Estimated to be 1.7–2.4-fold more transmissible than wild-type: https://science.sciencemag.org/content/early/2021/04/13/science.abh2644
+            rel_beta        = 2.05, # Estimated to be 1.7–2.4-fold more transmissible than wild-type: https://science.sciencemag.org/content/early/2021/04/13/science.abh2644
             rel_symp_prob   = 1.0,
-            rel_severe_prob = 1.4,
+            rel_severe_prob = 2.6, # From https://www.eurosurveillance.org/content/10.2807/1560-7917.ES.2021.26.16.2100348
             rel_crit_prob   = 1.0,
-            rel_death_prob  = 2.0,
+            rel_death_prob  = 1.0,
         )
     )
 
@@ -396,7 +395,7 @@ def get_strain_pars(default=False):
 
 def get_cross_immunity(default=False):
     '''
-    Get the cross immunity between each strain in a sim
+    Get the cross immunity between each variant in a sim
     '''
     pars = dict(
 
@@ -416,9 +415,9 @@ def get_cross_immunity(default=False):
 
         b1351 = dict(
             wild  = 0.066, # https://www.nature.com/articles/s41586-021-03471-w
-            b117  = 0.1,   # Assumption
+            b117  = 0.5,   # Assumption
             b1351 = 1.0,   # Default for own-immunity
-            p1    = 0.1,   # Assumption
+            p1    = 0.5,   # Assumption
         ),
 
         p1 = dict(
@@ -435,9 +434,9 @@ def get_cross_immunity(default=False):
         return pars
 
 
-def get_vaccine_strain_pars(default=False):
+def get_vaccine_variant_pars(default=False):
     '''
-    Define the effectiveness of each vaccine against each strain
+    Define the effectiveness of each vaccine against each variant
     '''
     pars = dict(
 
@@ -492,12 +491,23 @@ def get_vaccine_strain_pars(default=False):
 
 def get_vaccine_dose_pars(default=False):
     '''
-    Define the dosing regimen for each vaccine
+    Define the parameters for each vaccine
     '''
+
+    # Default vaccine NAb efficacy is nearly identical to infection -- only alpha_inf differs
+    default_nab_eff = dict(
+        alpha_inf      =  1.11,
+        beta_inf       =  1.219,
+        alpha_symp_inf = -1.06,
+        beta_symp_inf  =  0.867,
+        alpha_sev_symp =  0.268,
+        beta_sev_symp  =  3.4
+    )
+
     pars = dict(
 
         default = dict(
-            nab_eff   = dict(sus=dict(slope=1.6, n_50=0.05)),
+            nab_eff   = sc.dcp(default_nab_eff),
             nab_init  = dict(dist='normal', par1=2, par2=2),
             nab_boost = 2,
             doses     = 1,
@@ -505,7 +515,7 @@ def get_vaccine_dose_pars(default=False):
         ),
 
         pfizer = dict(
-            nab_eff   = dict(sus=dict(slope=1.6, n_50=0.05)),
+            nab_eff   = sc.dcp(default_nab_eff),
             nab_init  = dict(dist='normal', par1=2, par2=2),
             nab_boost = 3,
             doses     = 2,
@@ -513,7 +523,7 @@ def get_vaccine_dose_pars(default=False):
         ),
 
         moderna = dict(
-            nab_eff   = dict(sus=dict(slope=1.6, n_50=0.05)),
+            nab_eff   = sc.dcp(default_nab_eff),
             nab_init  = dict(dist='normal', par1=2, par2=2),
             nab_boost = 3,
             doses     = 2,
@@ -521,23 +531,23 @@ def get_vaccine_dose_pars(default=False):
         ),
 
         az = dict(
-            nab_eff   = dict(sus=dict(slope=1.6, n_50=0.05)),
-            nab_init  = dict(dist='normal', par1=-0.85, par2=2),
+            nab_eff   = sc.dcp(default_nab_eff),
+            nab_init  = dict(dist='normal', par1=-1, par2=2),
             nab_boost = 3,
             doses     = 2,
             interval  = 21,
         ),
 
         jj = dict(
-            nab_eff   = dict(sus=dict(slope=1.6, n_50=0.05)),
-            nab_init  = dict(dist='normal', par1=-1.1, par2=2),
+            nab_eff   = sc.dcp(default_nab_eff),
+            nab_init  = dict(dist='normal', par1=1, par2=2),
             nab_boost = 3,
             doses     = 1,
             interval  = None,
         ),
 
         novavax = dict(
-            nab_eff   = dict(sus=dict(slope=1.6, n_50=0.05)),
+            nab_eff   = sc.dcp(default_nab_eff),
             nab_init  = dict(dist='normal', par1=-0.9, par2=2),
             nab_boost = 3,
             doses     = 2,

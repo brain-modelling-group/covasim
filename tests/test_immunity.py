@@ -1,5 +1,5 @@
 '''
-Tests for immune waning, strains, and vaccine intervention.
+Tests for immune waning, variants, and vaccine intervention.
 '''
 
 #%% Imports and settings
@@ -7,11 +7,12 @@ import sciris as sc
 import covasim as cv
 import pandas as pd
 import pylab as pl
+import numpy as np
 
 do_plot = 1
 cv.options.set(interactive=False) # Assume not running interactively
 
-# Shared parameters arcross simulations
+# Shared parameters across simulations
 base_pars = dict(
     pop_size = 1e3,
     verbose  = -1,
@@ -93,8 +94,7 @@ def test_waning(do_plot=False):
         # Define parameters specific to this test
         pars = dict(
             n_days    = 90,
-            beta      = 0.008,
-            nab_decay = dict(form='nab_decay', decay_rate1=0.1, decay_time1=250, decay_rate2=0.001)
+            beta      = 0.01,
         )
 
         # Optionally include rescaling
@@ -112,33 +112,32 @@ def test_waning(do_plot=False):
         msim = cv.MultiSim([s0,s1])
         msims[rescale] = msim
 
-
         # Check results
         for key in ['n_susceptible', 'cum_infections', 'cum_reinfections', 'pop_nabs', 'pop_protection', 'pop_symp_protection']:
             v0 = res0[key]
             v1 = res1[key]
             print(f'Checking {key:20s} ... ', end='')
-            assert v1 > v0, f'Expected {key} to be higher with waning than without'
+            assert v1 > v0, f'Expected {key} to be higher with waning ({v1}) than without ({v0})'
             print(f'✓ ({v1} > {v0})')
 
         # Optionally plot
         if do_plot:
-            msim.plot('overview-strain', rotation=30)
+            msim.plot('overview-variant', rotation=30)
 
     return msims
 
 
-def test_strains(do_plot=False):
-    sc.heading('Testing strains...')
+def test_variants(do_plot=False):
+    sc.heading('Testing variants...')
 
-    b117 = cv.strain('b117',         days=10, n_imports=20)
-    p1   = cv.strain('sa variant',   days=20, n_imports=20)
-    cust = cv.strain(label='Custom', days=40, n_imports=20, strain={'rel_beta': 2, 'rel_symp_prob': 1.6})
-    sim  = cv.Sim(base_pars, use_waning=True, strains=[b117, p1, cust])
+    b117 = cv.variant('b117',         days=10, n_imports=20)
+    p1   = cv.variant('sa variant',   days=20, n_imports=20)
+    cust = cv.variant(label='Custom', days=40, n_imports=20, variant={'rel_beta': 2, 'rel_symp_prob': 1.6})
+    sim  = cv.Sim(base_pars, use_waning=True, variants=[b117, p1, cust])
     sim.run()
 
     if do_plot:
-        sim.plot('overview-strain')
+        sim.plot('overview-variant')
 
     return sim
 
@@ -146,15 +145,75 @@ def test_strains(do_plot=False):
 def test_vaccines(do_plot=False):
     sc.heading('Testing vaccines...')
 
-    p1 = cv.strain('sa variant',   days=20, n_imports=20)
-    pfizer = cv.vaccinate(vaccine='pfizer', days=30)
-    sim  = cv.Sim(base_pars, use_waning=True, strains=p1, interventions=pfizer)
+    p1 = cv.variant('sa variant',   days=20, n_imports=20)
+    pfizer = cv.vaccinate_prob(vaccine='pfizer', days=30)
+    sim  = cv.Sim(base_pars, use_waning=True, variants=p1, interventions=pfizer)
     sim.run()
 
     if do_plot:
-        sim.plot('overview-strain')
+        sim.plot('overview-variant')
 
     return sim
+
+
+def test_vaccines_sequential(do_plot=False):
+    sc.heading('Testing sequential vaccine...')
+
+    p1 = cv.variant('sa variant',   days=20, n_imports=20)
+    def age_sequence(people): return np.argsort(-people.age)
+
+    n_doses = []
+    pfizer = cv.vaccinate_num(vaccine='pfizer', sequence=age_sequence, num_doses=lambda sim: sim.t)
+    sim  = cv.Sim(base_pars, rescale=False, use_waning=True, variants=p1, interventions=pfizer, analyzers=lambda sim: n_doses.append(sim.people.vaccinations.copy()))
+    sim.run()
+
+    n_doses = np.array(n_doses)
+
+    if do_plot:
+        fully_vaccinated = (n_doses == 2).sum(axis=1)
+        first_dose = (n_doses == 1).sum(axis=1)
+        pl.stackplot(sim.tvec, first_dose, fully_vaccinated)
+
+        # Stacked bars by 10 year age
+
+        # At the end of the simulation
+        df = pd.DataFrame(n_doses.T)
+        df['age_bin'] = np.digitize(sim.people.age,np.arange(0,100,10))
+        df['fully_vaccinated'] = df[60]==2
+        df['first_dose'] = df[60]==1
+        df['unvaccinated'] = df[60]==0
+        out = df.groupby('age_bin').sum()
+        out[["unvaccinated", "first_dose","fully_vaccinated"]].plot(kind="bar", stacked=True)
+
+        # Part-way through the simulation
+        df = pd.DataFrame(n_doses.T)
+        df['age_bin'] = np.digitize(sim.people.age,np.arange(0,100,10))
+        df['fully_vaccinated'] = df[40]==2
+        df['first_dose'] = df[40]==1
+        df['unvaccinated'] = df[40]==0
+        out = df.groupby('age_bin').sum()
+        out[["unvaccinated", "first_dose","fully_vaccinated"]].plot(kind="bar", stacked=True)
+
+    return sim
+
+
+def test_two_vaccines(do_plot=False):
+    sc.heading('Testing nab decay in simulation...')
+
+    p1 = cv.variant('sa variant',   days=20, n_imports=0)
+
+    nabs = []
+    vac1 = cv.vaccinate_num(vaccine='pfizer', sequence=[0], num_doses=1)
+    vac2 = cv.vaccinate_num(vaccine='jj', sequence=[1], num_doses=1)
+
+    sim  = cv.Sim(base_pars, n_days=1000, pop_size=2, pop_infected=0, rescale=False, use_waning=True, variants=p1, interventions=[vac1, vac2], analyzers=lambda sim: nabs.append(sim.people.nab.copy()))
+    sim.run()
+
+    if do_plot:
+        nabs = np.array(nabs)
+        print(sim.people.peak_nab)
+        pl.figure()
+        pl.plot(nabs)
 
 
 def test_decays(do_plot=False):
@@ -164,11 +223,21 @@ def test_decays(do_plot=False):
     x = pl.arange(n)
 
     pars = sc.objdict(
+
+        nab_growth_decay = dict(
+            func = cv.immunity.nab_growth_decay,
+            length = n,
+            growth_time = 22,
+            decay_rate1 = np.log(2)/100,
+            decay_time1 = 250,
+            decay_rate2 = 0.002587529,
+        ),
+
         nab_decay = dict(
             func = cv.immunity.nab_decay,
             length = n,
             decay_rate1 = 0.05,
-            decay_time1= 100,
+            decay_time1 = 100,
             decay_rate2 = 0.002,
         ),
 
@@ -176,7 +245,7 @@ def test_decays(do_plot=False):
             func = cv.immunity.exp_decay,
             length = n,
             init_val = 0.8,
-            half_life= 100,
+            half_life = 100,
             delay = 20,
         ),
 
@@ -203,14 +272,13 @@ def test_decays(do_plot=False):
     if do_plot:
         pl.figure(figsize=(12,8))
         for key,y in res.items():
-            pl.semilogy(x, y, label=key, lw=3, alpha=0.7)
+            pl.semilogy(x, np.cumsum(y), label=key, lw=3, alpha=0.7)
         pl.legend()
         pl.show()
 
     res.x = x
 
     return res
-
 
 
 #%% Run as a script
@@ -222,8 +290,10 @@ if __name__ == '__main__':
 
     sim1   = test_states()
     msims1 = test_waning(do_plot=do_plot)
-    sim2   = test_strains(do_plot=do_plot)
+    sim2   = test_variants(do_plot=do_plot)
     sim3   = test_vaccines(do_plot=do_plot)
+    sim4   = test_vaccines_sequential(do_plot=do_plot)
+    sim5   = test_two_vaccines(do_plot=do_plot)
     res    = test_decays(do_plot=do_plot)
 
     sc.toc(T)
